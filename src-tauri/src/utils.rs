@@ -27,7 +27,20 @@ pub fn cancel_current_operation(app: &AppHandle) {
 
     // Update tray icon and hide overlay
     change_tray_icon(app, crate::tray::TrayIconState::Idle);
-    hide_recording_overlay(app);
+    
+    // Properly close the overlay window to stop WebView2 background activity
+    // This is critical to prevent persistent disk I/O (~70 KB/s) when idle
+    if let Some(overlay_window) = app.get_webview_window("recording_overlay") {
+        // Emit hide event for fade-out animation
+        let _ = overlay_window.emit("hide-overlay", ());
+        
+        // Close the window completely (not just hide) to stop WebView2 activity
+        let window_clone = overlay_window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let _ = window_clone.close();
+        });
+    }
 
     // Unload model if immediate unload is enabled
     let tm = app.state::<Arc<TranscriptionManager>>();
