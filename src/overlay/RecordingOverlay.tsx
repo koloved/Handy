@@ -20,49 +20,46 @@ const RecordingOverlay: React.FC = () => {
   const [levels, setLevels] = useState<number[]>(Array(16).fill(0));
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   const direction = getLanguageDirection(i18n.language);
-  const isVisibleRef = useRef(isVisible);
-  useEffect(() => {
-    isVisibleRef.current = isVisible;
-  }, [isVisible]);
 
   useEffect(() => {
-    let unlistenShow: (() => void) | null = null;
-    let unlistenHide: (() => void) | null = null;
-    let unlistenLevel: (() => void) | null = null;
-
-    const setup = async () => {
-      unlistenShow = await listen("show-overlay", async (event) => {
+    const setupEventListeners = async () => {
+      // Listen for show-overlay event from Rust
+      const unlistenShow = await listen("show-overlay", async (event) => {
+        // Sync language from settings each time overlay is shown
         await syncLanguageFromSettings();
         const overlayState = event.payload as OverlayState;
         setState(overlayState);
         setIsVisible(true);
       });
 
-      unlistenHide = await listen("hide-overlay", () => {
+      // Listen for hide-overlay event from Rust
+      const unlistenHide = await listen("hide-overlay", () => {
         setIsVisible(false);
-        setLevels(Array(16).fill(0));
-        setState("recording");
       });
 
-      unlistenLevel = await listen<number[]>("mic-level", (event) => {
-        if (!isVisibleRef.current) return;
+      // Listen for mic-level updates
+      const unlistenLevel = await listen<number[]>("mic-level", (event) => {
         const newLevels = event.payload as number[];
+
+        // Apply smoothing to reduce jitter
         const smoothed = smoothedLevelsRef.current.map((prev, i) => {
           const target = newLevels[i] || 0;
-          return prev * 0.7 + target * 0.3;
+          return prev * 0.7 + target * 0.3; // Smooth transition
         });
+
         smoothedLevelsRef.current = smoothed;
         setLevels(smoothed.slice(0, 9));
       });
+
+      // Cleanup function
+      return () => {
+        unlistenShow();
+        unlistenHide();
+        unlistenLevel();
+      };
     };
 
-    setup();
-
-    return () => {
-      unlistenShow?.();
-      unlistenHide?.();
-      unlistenLevel?.();
-    };
+    setupEventListeners();
   }, []);
 
   const getIcon = () => {
