@@ -545,7 +545,16 @@ impl ShortcutAction for TranscribeAction {
 
                     // Transcribe concurrently with WAV save
                     let transcription_time = Instant::now();
-                    let transcription_result = tm.transcribe(samples);
+                    let tm_clone = tm.clone();
+                    let transcription_result =
+                        match tokio::task::spawn_blocking(move || tm_clone.transcribe(samples))
+                            .await
+                        {
+                            Ok(result) => result,
+                            Err(join_err) => {
+                                Err(anyhow::anyhow!("Transcription panicked: {}", join_err))
+                            }
+                        };
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
