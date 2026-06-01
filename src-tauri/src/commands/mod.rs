@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod custom_prompts;
 pub mod history;
 pub mod models;
 pub mod transcription;

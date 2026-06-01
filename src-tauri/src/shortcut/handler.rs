@@ -7,9 +7,10 @@ use log::warn;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-use crate::actions::ACTION_MAP;
+use crate::actions::{ShortcutAction, ACTION_MAP};
+use crate::custom_prompt_action::CustomPromptAction;
 use crate::managers::audio::AudioRecordingManager;
-use crate::settings::get_settings;
+use crate::settings::{get_settings, CUSTOM_PROMPT_PREFIX};
 use crate::transcription_coordinator::is_transcribe_binding;
 use crate::TranscriptionCoordinator;
 
@@ -40,6 +41,17 @@ pub fn handle_shortcut_event(
             coordinator.send_input(binding_id, hotkey_string, is_pressed, settings.push_to_talk);
         } else {
             warn!("TranscriptionCoordinator is not initialized");
+        }
+        return;
+    }
+
+    // Custom hotkey prompts are handled separately (not in ACTION_MAP since they're dynamic)
+    if binding_id.starts_with(CUSTOM_PROMPT_PREFIX) {
+        let action = CustomPromptAction;
+        if is_pressed {
+            action.start(app, binding_id, hotkey_string);
+        } else {
+            action.stop(app, binding_id, hotkey_string);
         }
         return;
     }

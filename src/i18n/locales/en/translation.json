@@ -430,6 +430,43 @@
         "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
       }
     },
+    "customPrompts": {
+      "title": "Hotkey Prompts",
+      "selectedPrompt": "Select a prompt...",
+      "createNew": "Create New Prompt",
+      "promptName": "Prompt Name",
+      "promptNamePlaceholder": "My prompt",
+      "hotkey": {
+        "title": "Hotkey",
+        "clickToRecord": "Click to record",
+        "pressKeys": "Press keys...",
+        "clear": "Clear",
+        "clearSymbol": "✕"
+      },
+      "mode": {
+        "title": "Mode",
+        "selection": "Edit selected text",
+        "selectionDescription": "Select text in any app, then press the hotkey to modify it with AI.",
+        "voice": "Record voice",
+        "voiceDescription": "Press the hotkey to start voice recording, then press again to transcribe and process."
+      },
+      "promptInstructions": "Instructions",
+      "promptInstructionsPlaceholder": "Enter instructions for the AI. Example: Fix grammar: ${output}",
+      "promptTip": "Use <code>${output}</code> as a placeholder for your selected text or transcription.",
+      "updatePrompt": "Update Prompt",
+      "deletePrompt": "Delete Prompt",
+      "deleteConfirm": "Are you sure you want to delete this prompt?",
+      "createPrompt": "Create",
+      "cancel": "Cancel",
+      "selectToEdit": "Select a prompt above to view and edit its details.",
+      "createFirst": "Click 'Create New Prompt' above to create your first hotkey prompt.",
+      "validation": {
+        "nameRequired": "Prompt name is required",
+        "nameUnique": "A prompt with this name already exists",
+        "hotkeyRequired": "Hotkey is required",
+        "promptRequired": "Prompt instructions are required"
+      }
+    },
     "history": {
       "title": "History",
       "openFolder": "Open Recordings Folder",

@@ -93,6 +93,22 @@ pub struct LLMPrompt {
     pub prompt: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptMode {
+    Selection,
+    Voice,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct CustomHotkeyPrompt {
+    pub id: String,
+    pub name: String,
+    pub hotkey: String,
+    pub prompt_text: String,
+    pub mode: PromptMode,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -434,6 +450,8 @@ pub struct AppSettings {
     pub whisper_gpu_device: i32,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+    #[serde(default)]
+    pub custom_hotkey_prompts: Vec<CustomHotkeyPrompt>,
 }
 
 fn default_model() -> String {
@@ -733,6 +751,7 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 }
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
+pub const CUSTOM_PROMPT_PREFIX: &str = "custom_prompt_";
 
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
@@ -837,6 +856,7 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
         extra_recording_buffer_ms: 0,
+        custom_hotkey_prompts: Vec::new(),
     }
 }
 

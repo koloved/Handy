@@ -112,6 +112,55 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
     Ok(())
 }
 
+/// Sends Ctrl+C (Cmd+C on macOS) to copy selected text to clipboard.
+/// Uses platform-specific virtual key codes so the shortcut works
+/// regardless of keyboard layout.
+///
+/// Before sending the copy command, this function releases all common
+/// modifier keys to avoid interference from hotkey modifiers that may
+/// still be held (e.g. when a hotkey like Ctrl+Alt+B is firing, Alt
+/// would otherwise combine with Ctrl+C producing Ctrl+Alt+C).
+pub fn send_copy(enigo: &mut Enigo) -> Result<(), String> {
+    // Platform-specific key definitions
+    #[cfg(target_os = "macos")]
+    let (modifier_key, c_key_code) = (Key::Meta, Key::Other(8)); // kVK_ANSI_C = 8
+    #[cfg(target_os = "windows")]
+    let (modifier_key, c_key_code) = (Key::Control, Key::Other(0x43)); // VK_C
+    #[cfg(target_os = "linux")]
+    let (modifier_key, c_key_code) = (Key::Control, Key::Unicode('c'));
+
+    // Release all common modifiers first to prevent interference from
+    // hotkey modifiers that may still be held by the user (e.g. Alt).
+    // If a modifier wasn't held, releasing it is a harmless no-op.
+    let common_modifiers = [
+        Key::Control,
+        Key::Shift,
+        Key::Alt,
+        #[cfg(target_os = "macos")]
+        Key::Meta,
+    ];
+    for m in &common_modifiers {
+        let _ = enigo.key(*m, enigo::Direction::Release);
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    enigo
+        .key(modifier_key, enigo::Direction::Press)
+        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
+    enigo
+        .key(c_key_code, enigo::Direction::Click)
+        .map_err(|e| format!("Failed to click C key: {}", e))?;
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    enigo
+        .key(modifier_key, enigo::Direction::Release)
+        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
+
+    Ok(())
+}
+
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {

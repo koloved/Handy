@@ -22,9 +22,9 @@ use tauri_plugin_autostart::ManagerExt;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
-    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
-    OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme, TypingTool,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
+    self, get_settings, AutoSubmitKey, ClipboardHandling, CustomHotkeyPrompt,
+    KeyboardImplementation, LLMPrompt, OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme,
+    TypingTool, APPLE_INTELLIGENCE_PROVIDER_ID, CUSTOM_PROMPT_PREFIX,
 };
 use crate::tray;
 
@@ -54,6 +54,9 @@ pub fn init_shortcuts(app: &AppHandle) {
             }
         }
     }
+
+    // Register custom hotkey prompts
+    register_all_custom_prompt_hotkeys(app);
 }
 
 /// Register the cancel shortcut (called when recording starts)
@@ -1223,4 +1226,56 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .expect("get_available_accelerators panicked")
+}
+
+// ============================================================================
+// Custom Hotkey Prompt Registration
+// ============================================================================
+
+/// Register a global shortcut for a custom hotkey prompt.
+pub fn register_custom_prompt_hotkey(
+    app: &AppHandle,
+    prompt: &CustomHotkeyPrompt,
+) -> Result<(), String> {
+    let binding_id = format!("{}{}", CUSTOM_PROMPT_PREFIX, prompt.id);
+    let binding = ShortcutBinding {
+        id: binding_id,
+        name: prompt.name.clone(),
+        description: format!("Custom prompt: {}", prompt.name),
+        default_binding: prompt.hotkey.clone(),
+        current_binding: prompt.hotkey.clone(),
+    };
+    register_shortcut(app, binding)
+}
+
+/// Unregister a global shortcut for a custom hotkey prompt.
+pub fn unregister_custom_prompt_hotkey(
+    app: &AppHandle,
+    prompt: &CustomHotkeyPrompt,
+) -> Result<(), String> {
+    let binding_id = format!("{}{}", CUSTOM_PROMPT_PREFIX, prompt.id);
+    let binding = ShortcutBinding {
+        id: binding_id,
+        name: prompt.name.clone(),
+        description: format!("Custom prompt: {}", prompt.name),
+        default_binding: prompt.hotkey.clone(),
+        current_binding: prompt.hotkey.clone(),
+    };
+    unregister_shortcut(app, binding)
+}
+
+/// Register all custom prompt hotkeys from settings. Called at startup.
+pub fn register_all_custom_prompt_hotkeys(app: &AppHandle) {
+    let settings = settings::get_settings(app);
+    for prompt in &settings.custom_hotkey_prompts {
+        if prompt.hotkey.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = register_custom_prompt_hotkey(app, prompt) {
+            warn!(
+                "Failed to register custom prompt '{}' hotkey: {}",
+                prompt.name, e
+            );
+        }
+    }
 }

@@ -12,6 +12,42 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
 
+/// Reads selected text by simulating Ctrl+C (Cmd+C on macOS), then reading the clipboard.
+/// Saves and restores the original clipboard content.
+pub fn read_selected_text(enigo: &mut Enigo, app_handle: &AppHandle) -> Result<String, String> {
+    let clipboard = app_handle.clipboard();
+    let original_content = clipboard.read_text().unwrap_or_default();
+
+    input::send_copy(enigo)?;
+
+    // Small delay for clipboard to populate
+    std::thread::sleep(Duration::from_millis(100));
+
+    let selected_text = clipboard
+        .read_text()
+        .map_err(|e| format!("Failed to read clipboard: {}", e))?;
+
+    // Restore original clipboard content
+    #[cfg(target_os = "linux")]
+    {
+        if is_wayland() && is_wl_copy_available() {
+            let _ = write_clipboard_via_wl_copy(&original_content);
+        } else {
+            let _ = clipboard.write_text(&original_content);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = clipboard.write_text(&original_content);
+    }
+
+    if selected_text.is_empty() {
+        return Err("No text selected".to_string());
+    }
+
+    Ok(selected_text)
+}
+
 /// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
 fn paste_via_clipboard(
     enigo: &mut Enigo,

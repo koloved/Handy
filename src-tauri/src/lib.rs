@@ -6,6 +6,7 @@ pub mod audio_toolkit;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod custom_prompt_action;
 mod helpers;
 mod input;
 mod llm_client;
@@ -392,6 +393,11 @@ pub fn run(cli_args: CliArgs) {
             commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
+            commands::custom_prompts::get_custom_hotkey_prompts,
+            commands::custom_prompts::create_custom_hotkey_prompt,
+            commands::custom_prompts::update_custom_hotkey_prompt,
+            commands::custom_prompts::delete_custom_hotkey_prompt,
+            commands::custom_prompts::check_custom_prompt_hotkey_conflict,
             commands::models::get_available_models,
             commands::models::get_model_info,
             commands::models::download_model,
