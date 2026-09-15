@@ -812,8 +812,15 @@ impl ShortcutAction for TranscribeAction {
                             );
 
                             let mut prompt_override_id: Option<String> = None;
+                            // Shadowed so an Escape in the picker can drop the
+                            // post-processing step and still paste the raw
+                            // transcription instead of losing it.
+                            let mut post_process = post_process;
 
-                            if prompt_picker && !is_blank_transcription(&transcription) {
+                            if prompt_picker
+                                && get_settings(&ah).post_process_ask_prompt_after_dictation
+                                && !is_blank_transcription(&transcription)
+                            {
                                 let picker_settings = get_settings(&ah);
                                 match crate::prompt_picker::await_prompt_choice(
                                     &ah,
@@ -829,10 +836,10 @@ impl ShortcutAction for TranscribeAction {
                                         prompt_override_id = Some(id);
                                     }
                                     crate::prompt_picker::PromptChoiceResult::Cancelled => {
-                                        debug!("Prompt picker cancelled; discarding transcription");
-                                        utils::hide_recording_overlay(&ah);
-                                        set_tray_state(&ah, TrayIconState::Idle);
-                                        return;
+                                        debug!(
+                                            "Prompt picker cancelled; pasting the raw transcription"
+                                        );
+                                        post_process = false;
                                     }
                                 }
 
@@ -1043,6 +1050,34 @@ fn remember_foreground_window() -> Option<isize> {
     None
 }
 
+/// Whether the foreground window is a terminal/console. The selection probe
+/// simulates Ctrl+C, which a terminal reads as an interrupt even when nothing
+/// is selected — so the probe is skipped there and the voice path is used.
+#[cfg(windows)]
+fn foreground_is_terminal() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let mut buf = [0u16; 256];
+    let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if len <= 0 {
+        return false;
+    }
+    let class = String::from_utf16_lossy(&buf[..len as usize]);
+    matches!(
+        class.as_str(),
+        // conhost, Windows Terminal, mintty (Git Bash / MSYS2), ConEmu
+        "ConsoleWindowClass" | "CASCADIA_HOSTING_WINDOW_CLASS" | "mintty" | "VirtualConsoleClass"
+    )
+}
+
+#[cfg(not(windows))]
+fn foreground_is_terminal() -> bool {
+    false
+}
+
 /// Best-effort refocus of the app the selection was captured in. On Windows the
 /// picker is a regular focusable window, so after it closes the foreground may
 /// legitimately be the target already (hide activates the next z-order window);
@@ -1157,12 +1192,15 @@ impl ShortcutAction for SelectionPromptAction {
             return;
         }
 
-        // Capture the selection synchronously: the decision between the
-        // selection flow and the voice fallback must happen before recording
-        // starts, otherwise recording would race the copy simulation. The
-        // ~200 ms block lands on the coordinator thread at the exact moment of
-        // the hotkey press, when nothing else is queued behind it.
-        let selection = crate::clipboard::capture_selected_text(app).unwrap_or_default();
+        // The probe costs a simulated copy and a clipboard round-trip, and it
+        // is meaningless in a terminal (Ctrl+C would interrupt the process
+        // there), so that case goes straight to the voice path.
+        let selection = if foreground_is_terminal() {
+            debug!("Foreground window is a terminal; skipping selection probe");
+            String::new()
+        } else {
+            crate::clipboard::capture_selected_text(app).unwrap_or_default()
+        };
 
         if selection.trim().is_empty() {
             debug!("No text selected; falling back to voice transcription");
@@ -1212,13 +1250,6 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map.insert(
         "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: true,
-            prompt_picker: false,
-        }) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "transcribe_with_prompt_picker".to_string(),
         Arc::new(SelectionPromptAction {
             voice_fallback: AtomicBool::new(false),
             flow_active: Arc::new(AtomicBool::new(false)),

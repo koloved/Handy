@@ -20,6 +20,7 @@ import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
 import { ShortcutInput } from "../ShortcutInput";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { useSettings } from "../../../hooks/useSettings";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
@@ -424,6 +425,36 @@ export const PostProcessingSettingsPrompts = React.memo(
 );
 PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
+/**
+ * Controls whether the smart hotkey asks which prompt to apply after dictating.
+ * When off, the prompt selected in settings is applied silently.
+ */
+const AskPromptAfterDictationToggle: React.FC<{
+  descriptionMode?: "inline" | "tooltip";
+  grouped?: boolean;
+}> = React.memo(({ descriptionMode = "tooltip", grouped = false }) => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+
+  const key = "post_process_ask_prompt_after_dictation";
+  const enabled = getSetting(key) ?? true;
+
+  return (
+    <ToggleSwitch
+      checked={enabled}
+      onChange={(value) => updateSetting(key, value)}
+      isUpdating={isUpdating(key)}
+      label={t("settings.postProcessing.hotkey.askPromptAfterDictation.label")}
+      description={t(
+        "settings.postProcessing.hotkey.askPromptAfterDictation.description",
+      )}
+      descriptionMode={descriptionMode}
+      grouped={grouped}
+    />
+  );
+});
+AskPromptAfterDictationToggle.displayName = "AskPromptAfterDictationToggle";
+
 export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
 
@@ -435,8 +466,7 @@ export const PostProcessingSettings: React.FC = () => {
           descriptionMode="tooltip"
           grouped={true}
         />
-        <ShortcutInput
-          shortcutId="transcribe_with_prompt_picker"
+        <AskPromptAfterDictationToggle
           descriptionMode="tooltip"
           grouped={true}
         />
