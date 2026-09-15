@@ -216,6 +216,19 @@ pub fn send_copy_ctrl_c(enigo: &mut Enigo) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let (modifier_key, c_key_code) = (Key::Control, Key::Unicode('c'));
 
+    // The hotkey that triggered the capture is often still physically held
+    // (e.g. Ctrl+Alt+P). Its modifiers combine with the simulated C key into
+    // Ctrl+Alt+C, which no app treats as copy — so clear them at the OS level
+    // first. Synthesizing a key-up for a key the user still holds is safe:
+    // their eventual physical release just sends a redundant key-up. Win/Meta
+    // is deliberately left alone — a synthetic Win-up can pop the Start menu.
+    for key in [Key::Control, Key::Alt, Key::Shift] {
+        let _ = enigo.key(key, enigo::Direction::Release);
+    }
+    // Give the OS a moment to process the key-ups before the copy chord, so
+    // apps that poll global key state see the modifiers as fully released.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
     // Press modifier + C
     enigo
         .key(modifier_key, enigo::Direction::Press)

@@ -1022,6 +1022,10 @@ struct SelectionPromptAction {
     /// coordinator's stop event is forwarded to [`TranscribeAction`]. The
     /// selection flow never records, so its stop is a no-op.
     voice_fallback: AtomicBool,
+    /// True while the selection flow (picker + LLM + paste) is in flight, so
+    /// a re-press (toggle mode re-delivers start once the coordinator rolled
+    /// back to idle) cannot stack a second run over the first one.
+    flow_active: Arc<AtomicBool>,
     voice_action: TranscribeAction,
 }
 
@@ -1147,8 +1151,9 @@ impl ShortcutAction for SelectionPromptAction {
         if app
             .try_state::<crate::prompt_picker::PendingPromptChoice>()
             .is_some_and(|pending| pending.is_pending())
+            || self.flow_active.load(Ordering::SeqCst)
         {
-            debug!("Prompt picker already pending; ignoring hotkey press");
+            debug!("Selection flow already in flight; ignoring hotkey press");
             return;
         }
 
@@ -1173,14 +1178,17 @@ impl ShortcutAction for SelectionPromptAction {
         // Leave any stale fallback ownership behind: this press runs the
         // selection flow, so a later stop must not reach the voice action.
         self.voice_fallback.store(false, Ordering::SeqCst);
+        self.flow_active.store(true, Ordering::SeqCst);
         let target_hwnd = remember_foreground_window();
+        let flow_active = Arc::clone(&self.flow_active);
         let ah = app.clone();
         std::thread::spawn(move || {
-            if let Err(err) =
-                tauri::async_runtime::block_on(run_selection_flow(ah, selection, target_hwnd))
-            {
+            let result =
+                tauri::async_runtime::block_on(run_selection_flow(ah, selection, target_hwnd));
+            if let Err(err) = result {
                 error!("Selection prompt flow failed: {}", err);
             }
+            flow_active.store(false, Ordering::SeqCst);
         });
     }
 
@@ -1213,6 +1221,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transcribe_with_prompt_picker".to_string(),
         Arc::new(SelectionPromptAction {
             voice_fallback: AtomicBool::new(false),
+            flow_active: Arc::new(AtomicBool::new(false)),
             voice_action: TranscribeAction {
                 post_process: true,
                 prompt_picker: true,
