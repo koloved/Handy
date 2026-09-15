@@ -506,10 +506,8 @@ fn register_all_shortcuts_for_implementation(
             continue;
         }
 
-        // Skip post-processing shortcuts when the feature is disabled
-        if (id == "transcribe_with_post_process" || id == "transcribe_with_prompt_picker")
-            && !current_settings.post_process_enabled
-        {
+        // Skip the post-processing shortcut when the feature is disabled
+        if id == "transcribe_with_post_process" && !current_settings.post_process_enabled {
             continue;
         }
 
@@ -1109,22 +1107,33 @@ pub fn change_auto_submit_key_setting(app: AppHandle, key: String) -> Result<(),
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_post_process_ask_prompt_after_dictation_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_ask_prompt_after_dictation = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.post_process_enabled = enabled;
     settings::write_settings(&app, settings.clone());
 
-    // Register or unregister the post-processing shortcuts
-    for id in [
-        "transcribe_with_post_process",
-        "transcribe_with_prompt_picker",
-    ] {
-        if let Some(binding) = settings.bindings.get(id).cloned() {
-            if enabled {
-                let _ = register_shortcut(&app, binding);
-            } else {
-                let _ = unregister_shortcut(&app, binding);
-            }
+    // Register or unregister the post-processing shortcut
+    if let Some(binding) = settings
+        .bindings
+        .get("transcribe_with_post_process")
+        .cloned()
+    {
+        if enabled {
+            let _ = register_shortcut(&app, binding);
+        } else {
+            let _ = unregister_shortcut(&app, binding);
         }
     }
 

@@ -496,6 +496,10 @@ pub struct AppSettings {
     pub post_process_selected_prompt_id: Option<String>,
     #[serde(default)]
     pub post_process_last_used_prompt_id: Option<String>,
+    /// When true, the smart hotkey asks which prompt to apply after dictating.
+    /// When false, the prompt selected in settings is applied silently.
+    #[serde(default = "default_post_process_ask_prompt_after_dictation")]
+    pub post_process_ask_prompt_after_dictation: bool,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
@@ -577,7 +581,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -705,6 +709,10 @@ fn default_theme() -> Theme {
 
 fn default_post_process_enabled() -> bool {
     false
+}
+
+fn default_post_process_ask_prompt_after_dictation() -> bool {
+    true
 }
 
 fn default_app_language() -> String {
@@ -983,30 +991,14 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe_with_post_process".to_string(),
         ShortcutBinding {
             id: "transcribe_with_post_process".to_string(),
-            name: "Transcribe with Post-Processing".to_string(),
-            description: "Converts your speech into text and applies AI post-processing."
+            name: "Smart Hotkey".to_string(),
+            description: "With text selected, transforms the selection with a prompt you pick. Otherwise records and transcribes, then lets you pick the prompt to apply."
                 .to_string(),
             default_binding: default_post_process_shortcut.to_string(),
             current_binding: default_post_process_shortcut.to_string(),
         },
     );
 
-    #[cfg(target_os = "macos")]
-    let default_prompt_picker_shortcut = "ctrlleft+fn";
-    #[cfg(not(target_os = "macos"))]
-    let default_prompt_picker_shortcut = "ctrl+alt+p";
-
-    bindings.insert(
-        "transcribe_with_prompt_picker".to_string(),
-        ShortcutBinding {
-            id: "transcribe_with_prompt_picker".to_string(),
-            name: "Prompt Picker Hotkey".to_string(),
-            description: "Transforms the text you have selected with an AI prompt you pick on the spot. If nothing is selected, records and transcribes as usual."
-                .to_string(),
-            default_binding: default_prompt_picker_shortcut.to_string(),
-            current_binding: default_prompt_picker_shortcut.to_string(),
-        },
-    );
     bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {
@@ -1061,6 +1053,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
         post_process_last_used_prompt_id: None,
+        post_process_ask_prompt_after_dictation: true,
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -1339,15 +1332,30 @@ fn apply_settings_migrations(
     }
 
     if stored_schema_version < 3 {
-        // The prompt-picker hotkey changed behavior: it now transforms the
-        // selected text directly (voice flow only as fallback). Refresh the
-        // persisted label/description so the settings UI stops describing the
-        // old speech-first flow; the user's chosen key is preserved.
-        if let Some(default) = get_default_settings()
+        // v3 refreshed the prompt-picker hotkey label. That hotkey no longer
+        // exists (see the v4 migration below, which retires it), so this is
+        // only kept to stamp the version for stores still sitting at v2.
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+    }
+
+    if stored_schema_version < 4 {
+        // The separate prompt-picker hotkey is gone: its behavior now lives on
+        // the post-processing hotkey (selection → transform, dictation →
+        // picker). Drop the stale binding from stores that still carry it, so
+        // the settings UI and the shortcut registry stop showing it, and
+        // refresh the post-processing hotkey's label for the new behavior.
+        if settings
             .bindings
             .remove("transcribe_with_prompt_picker")
+            .is_some()
         {
-            if let Some(binding) = settings.bindings.get_mut("transcribe_with_prompt_picker") {
+            updated = true;
+        }
+        if let Some(default) = get_default_settings()
+            .bindings
+            .remove("transcribe_with_post_process")
+        {
+            if let Some(binding) = settings.bindings.get_mut("transcribe_with_post_process") {
                 binding.name = default.name;
                 binding.description = default.description;
                 updated = true;

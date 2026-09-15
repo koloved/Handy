@@ -346,12 +346,8 @@
             "description": "The keyboard shortcut to cancel the current recording."
           },
           "transcribe_with_post_process": {
-            "name": "Post-Processing Hotkey",
-            "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
-          },
-          "transcribe_with_prompt_picker": {
-            "name": "Prompt Picker Hotkey",
-            "description": "Transforms the text you have selected with an AI prompt you pick on the spot. If nothing is selected, records and transcribes as usual."
+            "name": "Smart Hotkey",
+            "description": "With text selected, transforms the selection with a prompt you pick. Otherwise records and transcribes, then lets you pick the prompt to apply."
           }
         },
         "errors": {
@@ -633,7 +629,11 @@
     },
     "postProcessing": {
       "hotkey": {
-        "title": "Hotkey"
+        "title": "Hotkey",
+        "askPromptAfterDictation": {
+          "label": "Ask for a prompt after dictating",
+          "description": "Show the prompt picker after each dictation on the smart hotkey. Turn off to apply the prompt selected above silently."
+        }
       },
       "api": {
         "title": "API",
