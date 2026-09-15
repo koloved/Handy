@@ -467,7 +467,12 @@ impl HistoryManager {
                 params![id],
             )?;
 
-            // Delete WAV file
+            // Delete WAV file. Entries without audio (prompt-picker
+            // transforms) carry an empty file name that would resolve to the
+            // recordings directory itself — skip them.
+            if file_name.is_empty() {
+                continue;
+            }
             let file_path = self.recordings_dir.join(file_name);
             if file_path.exists() {
                 if let Err(e) = fs::remove_file(&file_path) {
@@ -693,12 +698,17 @@ impl HistoryManager {
 
         // Get the entry to find the file name
         if let Some(entry) = self.get_entry_by_id(id).await? {
-            // Delete the audio file first
-            let file_path = self.get_audio_file_path(&entry.file_name);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                    // Continue with database deletion even if file deletion fails
+            // Entries without audio (e.g. prompt-picker transforms) have an
+            // empty file name — the path would resolve to the recordings
+            // directory itself, so skip file deletion for them.
+            if !entry.file_name.is_empty() {
+                // Delete the audio file first
+                let file_path = self.get_audio_file_path(&entry.file_name);
+                if file_path.exists() {
+                    if let Err(e) = fs::remove_file(&file_path) {
+                        error!("Failed to delete audio file {}: {}", entry.file_name, e);
+                        // Continue with database deletion even if file deletion fails
+                    }
                 }
             }
         }

@@ -577,7 +577,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -1000,10 +1000,9 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe_with_prompt_picker".to_string(),
         ShortcutBinding {
             id: "transcribe_with_prompt_picker".to_string(),
-            name: "Transcribe with Prompt Picker".to_string(),
-            description:
-                "Converts your speech into text, then lets you pick which AI post-processing prompt to apply."
-                    .to_string(),
+            name: "Prompt Picker Hotkey".to_string(),
+            description: "Transforms the text you have selected with an AI prompt you pick on the spot. If nothing is selected, records and transcribes as usual."
+                .to_string(),
             default_binding: default_prompt_picker_shortcut.to_string(),
             current_binding: default_prompt_picker_shortcut.to_string(),
         },
@@ -1337,6 +1336,24 @@ fn apply_settings_migrations(
         settings.transcribe_gpu_device = default_transcribe_gpu_device();
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
+    }
+
+    if stored_schema_version < 3 {
+        // The prompt-picker hotkey changed behavior: it now transforms the
+        // selected text directly (voice flow only as fallback). Refresh the
+        // persisted label/description so the settings UI stops describing the
+        // old speech-first flow; the user's chosen key is preserved.
+        if let Some(default) = get_default_settings()
+            .bindings
+            .remove("transcribe_with_prompt_picker")
+        {
+            if let Some(binding) = settings.bindings.get_mut("transcribe_with_prompt_picker") {
+                binding.name = default.name;
+                binding.description = default.description;
+                updated = true;
+            }
+        }
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
     }
 
     // The generic GPU choice was removed in favor of Auto or an exact device.
