@@ -1008,7 +1008,10 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
     settings::write_settings(&app, settings.clone());
 
     // Register or unregister the post-processing shortcuts
-    for id in ["transcribe_with_post_process", "transcribe_with_prompt_picker"] {
+    for id in [
+        "transcribe_with_post_process",
+        "transcribe_with_prompt_picker",
+    ] {
         if let Some(binding) = settings.bindings.get(id).cloned() {
             if enabled {
                 let _ = register_shortcut(&app, binding);

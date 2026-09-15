@@ -476,13 +476,9 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(
-            app,
-            &settings,
-            &final_text,
-            prompt_override_id.as_deref(),
-        )
-        .await
+        if let Some(processed_text) =
+            post_process_transcription(app, &settings, &final_text, prompt_override_id.as_deref())
+                .await
         {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
@@ -834,7 +830,7 @@ impl ShortcutAction for TranscribeAction {
                                     crate::prompt_picker::PromptChoiceResult::Cancelled => {
                                         debug!("Prompt picker cancelled; discarding transcription");
                                         utils::hide_recording_overlay(&ah);
-                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                        set_tray_state(&ah, TrayIconState::Idle);
                                         return;
                                     }
                                 }
@@ -844,7 +840,7 @@ impl ShortcutAction for TranscribeAction {
                                         "Transcription operation cancelled during prompt picker"
                                     );
                                     utils::hide_recording_overlay(&ah);
-                                    change_tray_icon(&ah, TrayIconState::Idle);
+                                    set_tray_state(&ah, TrayIconState::Idle);
                                     return;
                                 }
                             }

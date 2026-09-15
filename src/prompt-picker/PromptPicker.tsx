@@ -1,10 +1,13 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import "./PromptPicker.css";
 import { commands, events } from "@/bindings";
 import type { LLMPrompt } from "@/bindings";
+import { syncLanguageFromSettings } from "@/i18n";
 
 const PromptPicker: React.FC = () => {
+  const { t } = useTranslation();
   const [prompts, setPrompts] = useState<LLMPrompt[]>([]);
   const [lastUsedPromptId, setLastUsedPromptId] = useState<string | null>(
     null,
@@ -28,6 +31,7 @@ const PromptPicker: React.FC = () => {
   }, [prompts, lastUsedPromptId]);
 
   useEffect(() => {
+    syncLanguageFromSettings();
     const unlistenPromise = events.promptPickerShowEvent.listen((event) => {
       setPrompts(event.payload.prompts);
       setLastUsedPromptId(event.payload.last_used_prompt_id ?? null);
@@ -120,8 +124,8 @@ const PromptPicker: React.FC = () => {
         <div className="pp-preview">{selectedPrompt?.prompt}</div>
       </div>
       <div className="pp-footer">
-        <span>Prompt library</span>
-        <span>Paste ⏎</span>
+        <span>{t("promptPicker.library")}</span>
+        <span>{t("promptPicker.confirmHint")}</span>
       </div>
     </div>
   );
