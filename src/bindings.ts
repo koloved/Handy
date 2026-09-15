@@ -1066,6 +1066,22 @@ async dismissNotice(source: NoticeSource, code: NoticeCode) : Promise<void> {
  */
 async dismissOverlayNotice() : Promise<void> {
     await TAURI_INVOKE("dismiss_overlay_notice");
+},
+async submitPromptChoice(promptId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("submit_prompt_choice", { promptId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelPromptChoice() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_prompt_choice") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1075,6 +1091,7 @@ async dismissOverlayNotice() : Promise<void> {
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
 noticesChanged: NoticesChanged,
+promptPickerShowEvent: PromptPickerShowEvent,
 recordingStateEvent: RecordingStateEvent,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
@@ -1083,6 +1100,7 @@ transcriptionJob: TranscriptionJob
 }>({
 historyUpdatePayload: "history-update-payload",
 noticesChanged: "notices-changed",
+promptPickerShowEvent: "prompt-picker-show-event",
 recordingStateEvent: "recording-state-event",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
@@ -1141,7 +1159,7 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * Every language the person dictates in (codes, e.g. ["en", "zh"]),
  * picked during onboarding. Empty until then.
  */
-spoken_languages?: string[]; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; 
+spoken_languages?: string[]; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; post_process_last_used_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; 
 /**
  * Experimental, macOS only: move a Bluetooth headset (AirPods) to this
  * Mac while recording, so its microphone does not return silence while
@@ -1258,6 +1276,7 @@ export type KeyboardImplementation = "tauri" | "handy_keys" |
  */
 "none"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type PromptPickerShowEvent = { prompts: LLMPrompt[]; last_used_prompt_id: string | null }
 /**
  * When Handy's spoken-language detector picks the language for Auto.
  */

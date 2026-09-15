@@ -134,6 +134,7 @@ pub trait ShortcutAction: Send + Sync {
 // Transcribe Action
 struct TranscribeAction {
     post_process: bool,
+    prompt_picker: bool,
 }
 
 /// Field name for structured output JSON schema
@@ -158,9 +159,14 @@ fn strip_think_block(s: &str) -> &str {
 }
 
 /// Build a system prompt from the user's prompt template.
-/// Removes `${output}` placeholder since the transcription is sent as the user message.
-fn build_system_prompt(prompt_template: &str) -> String {
-    prompt_template.replace("${output}", "").trim().to_string()
+/// Removes `${output}` placeholder since the transcription is sent as the user message,
+/// and substitutes `${selected}` with the captured selection.
+fn build_system_prompt(prompt_template: &str, selected_text: &str) -> String {
+    prompt_template
+        .replace("${output}", "")
+        .replace("${selected}", selected_text)
+        .trim()
+        .to_string()
 }
 
 /// Returns `true` when a transcription has no meaningful content to
@@ -218,9 +224,25 @@ enum PostProcessOutcome {
     Failed,
 }
 
+/// Resolves which prompt id to post-process with: an explicit per-call
+/// override (from the prompt picker) wins over the settings-selected prompt.
+fn resolve_prompt_id(
+    prompt_override_id: Option<&str>,
+    selected_prompt_id: &Option<String>,
+) -> Option<String> {
+    prompt_override_id
+        .map(|s| s.to_string())
+        .or_else(|| selected_prompt_id.clone())
+}
+
+/// Post-processes `transcription` with the prompt a caller picked or the one
+/// selected in settings. `app` is only needed to capture the text selected in
+/// the active app when the prompt references `${selected}`; tests pass `None`.
 async fn post_process_transcription(
+    app: Option<&AppHandle>,
     settings: &AppSettings,
     transcription: &str,
+    prompt_override_id: Option<&str>,
 ) -> PostProcessOutcome {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
@@ -249,8 +271,11 @@ async fn post_process_transcription(
         return PostProcessOutcome::Failed;
     }
 
-    let selected_prompt_id = match &settings.post_process_selected_prompt_id {
-        Some(id) => id.clone(),
+    let selected_prompt_id = match resolve_prompt_id(
+        prompt_override_id,
+        &settings.post_process_selected_prompt_id,
+    ) {
+        Some(id) => id,
         None => {
             debug!("Post-processing skipped because no prompt is selected");
             return PostProcessOutcome::Failed;
@@ -277,6 +302,15 @@ async fn post_process_transcription(
         return PostProcessOutcome::Failed;
     }
 
+    // Only simulate a copy keystroke (which touches the user's clipboard) when
+    // the prompt actually references the selection.
+    let selected_text = if prompt.contains("${selected}") {
+        app.and_then(crate::clipboard::capture_selected_text)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     debug!(
         "Starting LLM post-processing with provider '{}' (model: {})",
         provider.id, model
@@ -296,7 +330,7 @@ async fn post_process_transcription(
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
-        let system_prompt = build_system_prompt(&prompt);
+        let system_prompt = build_system_prompt(&prompt, &selected_text);
         let user_content = transcription.to_string();
 
         // Handle Apple Intelligence separately since it uses native Swift APIs
@@ -410,8 +444,10 @@ async fn post_process_transcription(
         }
     }
 
-    // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
+    // Legacy mode: Replace ${output}/${selected} variables in the prompt with the actual text
+    let processed_prompt = prompt
+        .replace("${output}", transcription)
+        .replace("${selected}", &selected_text);
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
@@ -459,6 +495,7 @@ pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    prompt_override_id: Option<String>,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
     let mut final_text = transcription.to_string();
@@ -470,7 +507,12 @@ pub(crate) async fn process_transcription_output(
         // A reply that's blank once cleaned is no better than none.
         let outcome = match tokio::time::timeout(
             POST_PROCESS_TIMEOUT,
-            post_process_transcription(&settings, &final_text),
+            post_process_transcription(
+                Some(app),
+                &settings,
+                &final_text,
+                prompt_override_id.as_deref(),
+            ),
         )
         .await
         {
@@ -492,11 +534,14 @@ pub(crate) async fn process_transcription_output(
                 post_processed_text = Some(processed_text.clone());
                 final_text = processed_text;
 
-                if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
+                let used_prompt_id = prompt_override_id
+                    .as_deref()
+                    .or(settings.post_process_selected_prompt_id.as_deref());
+                if let Some(prompt_id) = used_prompt_id {
                     if let Some(prompt) = settings
                         .post_process_prompts
                         .iter()
-                        .find(|prompt| &prompt.id == prompt_id)
+                        .find(|prompt| prompt.id == prompt_id)
                     {
                         post_process_prompt = Some(prompt.prompt.clone());
                     }
@@ -737,6 +782,7 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
+        let prompt_picker = self.prompt_picker;
         let cancel_generation = rm.cancel_generation();
 
         tauri::async_runtime::spawn(async move {
@@ -831,6 +877,41 @@ impl ShortcutAction for TranscribeAction {
                                 utils::redact_text(&transcription)
                             );
 
+                            let mut prompt_override_id: Option<String> = None;
+
+                            if prompt_picker && !is_blank_transcription(&transcription) {
+                                let picker_settings = get_settings(&ah);
+                                match crate::prompt_picker::await_prompt_choice(
+                                    &ah,
+                                    picker_settings.post_process_prompts.clone(),
+                                    picker_settings.post_process_last_used_prompt_id.clone(),
+                                )
+                                .await
+                                {
+                                    crate::prompt_picker::PromptChoiceResult::Chosen(id) => {
+                                        let mut s = get_settings(&ah);
+                                        s.post_process_last_used_prompt_id = Some(id.clone());
+                                        crate::settings::write_settings(&ah, s);
+                                        prompt_override_id = Some(id);
+                                    }
+                                    crate::prompt_picker::PromptChoiceResult::Cancelled => {
+                                        debug!("Prompt picker cancelled; discarding transcription");
+                                        utils::hide_recording_overlay(&ah);
+                                        set_tray_state(&ah, TrayIconState::Idle);
+                                        return;
+                                    }
+                                }
+
+                                if rm.was_cancelled_since(cancel_generation) {
+                                    debug!(
+                                        "Transcription operation cancelled during prompt picker"
+                                    );
+                                    utils::hide_recording_overlay(&ah);
+                                    set_tray_state(&ah, TrayIconState::Idle);
+                                    return;
+                                }
+                            }
+
                             if post_process {
                                 if use_streaming_overlay {
                                     tm.emit_stream_working(StreamWorkKind::Polishing);
@@ -839,7 +920,12 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
                             let Some(processed) = complete_unless_cancelled(
-                                process_transcription_output(&ah, &transcription, post_process),
+                                process_transcription_output(
+                                    &ah,
+                                    &transcription,
+                                    post_process,
+                                    prompt_override_id,
+                                ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
                             .await
@@ -1086,11 +1172,22 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transcribe".to_string(),
         Arc::new(TranscribeAction {
             post_process: false,
+            prompt_picker: false,
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction {
+            post_process: true,
+            prompt_picker: false,
+        }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "transcribe_with_prompt_picker".to_string(),
+        Arc::new(TranscribeAction {
+            post_process: true,
+            prompt_picker: true,
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
@@ -1107,8 +1204,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 mod tests {
     use super::{
         complete_unless_cancelled, is_blank_transcription, non_blank_post_processed_text,
-        post_process_transcription, should_use_streaming_overlay, strip_invisible_chars,
-        strip_think_block, PostProcessOutcome,
+        post_process_transcription, resolve_prompt_id, should_use_streaming_overlay,
+        strip_invisible_chars, strip_think_block, PostProcessOutcome,
     };
     use crate::settings::{get_default_settings, AppSettings, OverlayStyle};
     use std::future;
@@ -1157,7 +1254,12 @@ mod tests {
     }
 
     fn run_post_process(settings: &AppSettings, transcription: &str) -> PostProcessOutcome {
-        tauri::async_runtime::block_on(post_process_transcription(settings, transcription))
+        tauri::async_runtime::block_on(post_process_transcription(
+            None,
+            settings,
+            transcription,
+            None,
+        ))
     }
 
     #[test]
@@ -1277,6 +1379,15 @@ mod tests {
     }
 
     #[test]
+    fn prompt_override_wins_over_selected() {
+        let selected = Some("selected-id".to_string());
+        assert_eq!(
+            resolve_prompt_id(Some("override-id"), &selected),
+            Some("override-id".to_string())
+        );
+    }
+
+    #[test]
     fn content_without_think_block_is_unchanged() {
         assert_eq!(strip_think_block("Cleaned text."), "Cleaned text.");
         assert_eq!(
@@ -1296,5 +1407,16 @@ mod tests {
         assert!(!should_use_streaming_overlay(OverlayStyle::Live, false));
         assert!(!should_use_streaming_overlay(OverlayStyle::Minimal, true));
         assert!(!should_use_streaming_overlay(OverlayStyle::None, true));
+    }
+
+    #[test]
+    fn falls_back_to_selected_when_no_override() {
+        let selected = Some("selected-id".to_string());
+        assert_eq!(resolve_prompt_id(None, &selected), selected);
+    }
+
+    #[test]
+    fn none_when_neither_set() {
+        assert_eq!(resolve_prompt_id(None, &None), None);
     }
 }

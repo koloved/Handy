@@ -21,6 +21,7 @@ mod notices;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+mod prompt_picker;
 mod secure_input;
 mod settings;
 mod shortcut;
@@ -399,6 +400,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+    // Create the prompt picker window (hidden by default)
+    prompt_picker::create_prompt_picker_window(app_handle);
 }
 
 #[tauri::command]
@@ -820,6 +823,8 @@ pub fn run(cli_args: CliArgs) {
             notices::get_active_notices,
             notices::dismiss_notice,
             notices::dismiss_overlay_notice,
+            prompt_picker::submit_prompt_choice,
+            prompt_picker::cancel_prompt_choice,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
@@ -829,6 +834,7 @@ pub fn run(cli_args: CliArgs) {
             transcription_coordinator::RecordingStateEvent,
             actions::TranscriptionCompleteEvent,
             notices::NoticesChanged,
+            prompt_picker::PromptPickerShowEvent,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
@@ -1099,6 +1105,7 @@ pub fn run(cli_args: CliArgs) {
             WEBVIEW_LOG_STREAMING.store(settings.debug_mode, Ordering::Relaxed);
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
+            app.manage(prompt_picker::PendingPromptChoice::default());
 
             initialize_core_logic(&app_handle);
 
