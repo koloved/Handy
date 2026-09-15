@@ -179,6 +179,10 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "transcribe_with_prompt_picker": {
+            "name": "Prompt Picker Hotkey",
+            "description": "Transforms the text you have selected with an AI prompt you pick on the spot. If nothing is selected, records and transcribes as usual."
           }
         },
         "errors": {

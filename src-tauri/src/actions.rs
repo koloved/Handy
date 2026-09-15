@@ -19,6 +19,7 @@ use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -1008,6 +1009,189 @@ impl ShortcutAction for TestAction {
     }
 }
 
+// Prompt Picker Action over selected text
+//
+// The hotkey transforms the text currently selected in the active app: capture
+// the selection, show the prompt picker immediately (no recording), run the
+// chosen prompt over the selection through the regular post-processing
+// pipeline, and paste the result in place of the selection. When nothing is
+// selected the hotkey falls back to the classic voice flow (record →
+// transcribe → picker → post-process) so it stays useful for dictation.
+struct SelectionPromptAction {
+    /// Set while the voice fallback path owns this binding's lifecycle, so the
+    /// coordinator's stop event is forwarded to [`TranscribeAction`]. The
+    /// selection flow never records, so its stop is a no-op.
+    voice_fallback: AtomicBool,
+    voice_action: TranscribeAction,
+}
+
+/// Remember the foreground window so the target app can be brought back before
+/// the result paste (the picker window takes focus while it is open).
+#[cfg(windows)]
+fn remember_foreground_window() -> Option<isize> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let hwnd = unsafe { GetForegroundWindow() };
+    (!hwnd.0.is_null()).then_some(hwnd.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn remember_foreground_window() -> Option<isize> {
+    None
+}
+
+/// Best-effort refocus of the app the selection was captured in. On Windows the
+/// picker is a regular focusable window, so after it closes the foreground may
+/// legitimately be the target already (hide activates the next z-order window);
+/// only step in when it is not. SetForegroundWindow can fail under the
+/// foreground lock — that is logged and non-fatal, the paste simply follows
+/// whatever is focused.
+#[cfg(windows)]
+fn restore_foreground_window(hwnd: Option<isize>) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+    let Some(raw) = hwnd else {
+        return;
+    };
+    let target = HWND(raw as *mut _);
+    unsafe {
+        if GetForegroundWindow() != target && !SetForegroundWindow(target).as_bool() {
+            debug!("SetForegroundWindow failed; pasting to whatever is focused");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_foreground_window(_hwnd: Option<isize>) {}
+
+/// Selection-mode pipeline: picker → post-process the selection → paste the
+/// result in place → history entry (no audio attached).
+async fn run_selection_flow(
+    app: AppHandle,
+    selection: String,
+    target_hwnd: Option<isize>,
+) -> Result<(), String> {
+    let settings = get_settings(&app);
+
+    if settings.active_post_process_provider().is_none() {
+        debug!("Selection prompt flow aborted: no post-process provider configured");
+        return Ok(());
+    }
+
+    set_tray_state(&app, TrayIconState::Transcribing);
+
+    match crate::prompt_picker::await_prompt_choice(
+        &app,
+        settings.post_process_prompts.clone(),
+        settings.post_process_last_used_prompt_id.clone(),
+    )
+    .await
+    {
+        crate::prompt_picker::PromptChoiceResult::Cancelled => {
+            debug!("Prompt picker cancelled; selection left untouched");
+            set_tray_state(&app, TrayIconState::Idle);
+            Ok(())
+        }
+        crate::prompt_picker::PromptChoiceResult::Chosen(prompt_id) => {
+            let mut latest = get_settings(&app);
+            latest.post_process_last_used_prompt_id = Some(prompt_id.clone());
+            crate::settings::write_settings(&app, latest);
+
+            show_processing_overlay(&app);
+
+            // The selection rides through the pipeline as the "transcription":
+            // `${output}` resolves to it in prompt templates and the structured
+            // schema receives it as the user message.
+            let processed =
+                post_process_transcription(&app, &settings, &selection, Some(&prompt_id)).await;
+
+            match processed {
+                Some(result) => {
+                    restore_foreground_window(target_hwnd);
+                    match utils::paste(result.clone(), app.clone()) {
+                        Ok(()) => {
+                            let prompt_text = settings
+                                .post_process_prompts
+                                .iter()
+                                .find(|p| p.id == prompt_id)
+                                .map(|p| p.prompt.clone());
+                            let hm = app.state::<Arc<HistoryManager>>();
+                            if let Err(err) = hm.save_entry(
+                                String::new(),
+                                selection,
+                                true,
+                                Some(result),
+                                prompt_text,
+                            ) {
+                                error!("Failed to save history entry: {}", err);
+                            }
+                        }
+                        Err(err) => error!("Failed to paste selection result: {}", err),
+                    }
+                }
+                None => {
+                    debug!("Post-processing returned nothing; selection left untouched");
+                }
+            }
+
+            utils::hide_recording_overlay(&app);
+            set_tray_state(&app, TrayIconState::Idle);
+            Ok(())
+        }
+    }
+}
+
+impl ShortcutAction for SelectionPromptAction {
+    fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
+        // Toggle mode re-delivers a press while the picker is open (the
+        // coordinator rolled back to idle since nothing records). Ignore it.
+        if app
+            .try_state::<crate::prompt_picker::PendingPromptChoice>()
+            .is_some_and(|pending| pending.is_pending())
+        {
+            debug!("Prompt picker already pending; ignoring hotkey press");
+            return;
+        }
+
+        // Capture the selection synchronously: the decision between the
+        // selection flow and the voice fallback must happen before recording
+        // starts, otherwise recording would race the copy simulation. The
+        // ~200 ms block lands on the coordinator thread at the exact moment of
+        // the hotkey press, when nothing else is queued behind it.
+        let selection = crate::clipboard::capture_selected_text(app).unwrap_or_default();
+
+        if selection.trim().is_empty() {
+            debug!("No text selected; falling back to voice transcription");
+            self.voice_fallback.store(true, Ordering::SeqCst);
+            self.voice_action.start(app, binding_id, shortcut_str);
+            return;
+        }
+
+        debug!(
+            "Selection captured ({} chars); showing prompt picker",
+            selection.len()
+        );
+        // Leave any stale fallback ownership behind: this press runs the
+        // selection flow, so a later stop must not reach the voice action.
+        self.voice_fallback.store(false, Ordering::SeqCst);
+        let target_hwnd = remember_foreground_window();
+        let ah = app.clone();
+        std::thread::spawn(move || {
+            if let Err(err) =
+                tauri::async_runtime::block_on(run_selection_flow(ah, selection, target_hwnd))
+            {
+                error!("Selection prompt flow failed: {}", err);
+            }
+        });
+    }
+
+    fn stop(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str) {
+        // Only the voice fallback records, so only it has a meaningful stop.
+        if self.voice_fallback.swap(false, Ordering::SeqCst) {
+            self.voice_action.stop(app, binding_id, shortcut_str);
+        }
+    }
+}
+
 // Static Action Map
 pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::new(|| {
     let mut map = HashMap::new();
@@ -1027,9 +1211,12 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map.insert(
         "transcribe_with_prompt_picker".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: true,
-            prompt_picker: true,
+        Arc::new(SelectionPromptAction {
+            voice_fallback: AtomicBool::new(false),
+            voice_action: TranscribeAction {
+                post_process: true,
+                prompt_picker: true,
+            },
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(

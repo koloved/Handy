@@ -49,6 +49,15 @@ pub enum PromptChoiceResult {
 #[derive(Default)]
 pub struct PendingPromptChoice(Mutex<Option<oneshot::Sender<PromptChoiceResult>>>);
 
+impl PendingPromptChoice {
+    /// Whether a picker session is currently waiting for a choice. Used to
+    /// ignore re-presses of the hotkey while the picker is already open
+    /// (toggle mode delivers the second press as a new start).
+    pub fn is_pending(&self) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct PromptPickerShowEvent {
     pub prompts: Vec<LLMPrompt>,
